@@ -12,7 +12,6 @@
       --border: #555;
       --hover: #d8d8d8;
       --visited: #f2f2f2;
-      --visited-hot: #fff;
       --text: #8f8f8f;
       --muted: #5f5f5f;
       --bar: rgba(0, 0, 0, 0.9);
@@ -113,7 +112,7 @@
       stroke-dasharray: 0.6 3.2;
       vector-effect: non-scaling-stroke;
       cursor: pointer;
-      transition: fill 120ms ease, stroke 120ms ease, filter 120ms ease, opacity 120ms ease;
+      transition: stroke 120ms ease, opacity 120ms ease;
     }
 
     .country:hover,
@@ -122,23 +121,17 @@
     .micro.hovered {
       fill: url(#dots-hover);
       stroke: var(--hover);
-      filter: drop-shadow(0 0 8px rgba(255, 255, 255, 0.3));
     }
 
     .country.visited,
     .micro.visited {
       fill: url(#dots-visited);
       stroke: var(--visited);
-      filter: drop-shadow(0 0 8px rgba(255, 255, 255, 0.28));
     }
 
-    .country.visited.hot,
     .country.visited:hover,
-    .micro.visited.hot,
     .micro.visited:hover {
-      fill: url(#dots-visited-hot);
-      stroke: var(--visited-hot);
-      filter: drop-shadow(0 0 12px rgba(255, 255, 255, 0.48));
+      stroke: #fff;
     }
 
     .micro {
@@ -148,15 +141,7 @@
       stroke-dasharray: 0.6 2.4;
       cursor: pointer;
       vector-effect: non-scaling-stroke;
-      transition: fill 120ms ease, stroke 120ms ease, filter 120ms ease;
-    }
-
-    .pulse {
-      animation: blip 160ms ease-out;
-    }
-
-    @keyframes blip {
-      50% { transform: translateY(-1px); }
+      transition: stroke 120ms ease;
     }
 
     .stats {
@@ -575,8 +560,7 @@ AF,67,34|AL,20,41|DZ,2,28|AD,1.6,42.5|AO,18,-12|AG,-61,17|AR,-64,-34|AM,45,40|AU
       defs.append(
         makePattern("dots-dim", "#5a5a5a", "0.42", "0.85"),
         makePattern("dots-hover", "#e2e2e2", "0.9", "1.05"),
-        makePattern("dots-visited", "#ffffff", "1", "1.05"),
-        makePattern("dots-visited-hot", "#ffffff", "1", "1.15")
+        makePattern("dots-visited", "#ffffff", "1", "1.05")
       );
 
       for (const countryPath of COUNTRY_PATHS) {
@@ -595,12 +579,11 @@ AF,67,34|AL,20,41|DZ,2,28|AD,1.6,42.5|AO,18,-12|AG,-61,17|AR,-64,-34|AM,45,40|AU
       updateStats();
     }
 
-    function syncCountry(iso, hot = false) {
+    function syncCountry(iso) {
       const countryCells = cellsByIso.get(iso) || [];
       const isVisited = visited.has(iso);
       for (const el of countryCells) {
         el.classList.toggle("visited", isVisited);
-        el.classList.toggle("hot", hot && isVisited);
       }
     }
 
@@ -624,9 +607,8 @@ AF,67,34|AL,20,41|DZ,2,28|AD,1.6,42.5|AO,18,-12|AG,-61,17|AR,-64,-34|AM,45,40|AU
       if (visited.has(iso)) visited.delete(iso);
       else visited.add(iso);
       saveVisited();
-      syncCountry(iso, true);
+      syncCountry(iso);
       updateStats();
-      setTimeout(() => syncCountry(iso), 180);
     }
 
     function setHover(iso, active) {
@@ -634,18 +616,22 @@ AF,67,34|AL,20,41|DZ,2,28|AD,1.6,42.5|AO,18,-12|AG,-61,17|AR,-64,-34|AM,45,40|AU
       for (const el of countryCells) el.classList.toggle("hovered", active);
     }
 
+    function getIsoTarget(eventTarget) {
+      return eventTarget && eventTarget.closest ? eventTarget.closest("[data-iso]") : null;
+    }
+
     MAP.addEventListener("click", (event) => {
       const target = event.target.closest("[data-iso]");
       if (!target) return;
       toggleCountry(target.dataset.iso);
-      target.classList.add("pulse");
-      setTimeout(() => target.classList.remove("pulse"), 180);
     });
 
     MAP.addEventListener("mouseover", (event) => {
-      const target = event.target.closest("[data-iso]");
+      const target = getIsoTarget(event.target);
       if (!target) return;
       const iso = target.dataset.iso;
+      const from = getIsoTarget(event.relatedTarget);
+      if (from && from.dataset.iso === iso) return;
       const country = countryByIso.get(iso);
       setHover(iso, true);
       tooltip.textContent = `${country.name} / ${iso}`;
@@ -653,9 +639,12 @@ AF,67,34|AL,20,41|DZ,2,28|AD,1.6,42.5|AO,18,-12|AG,-61,17|AR,-64,-34|AM,45,40|AU
     });
 
     MAP.addEventListener("mouseout", (event) => {
-      const target = event.target.closest("[data-iso]");
+      const target = getIsoTarget(event.target);
       if (!target) return;
-      setHover(target.dataset.iso, false);
+      const iso = target.dataset.iso;
+      const to = getIsoTarget(event.relatedTarget);
+      if (to && to.dataset.iso === iso) return;
+      setHover(iso, false);
       tooltip.classList.remove("visible");
     });
 
@@ -717,7 +706,7 @@ AF,67,34|AL,20,41|DZ,2,28|AD,1.6,42.5|AO,18,-12|AG,-61,17|AR,-64,-34|AM,45,40|AU
       style.textContent = `
         .country { fill: url(#dots-dim); stroke: #747474; stroke-width: 0.62; stroke-linejoin: round; stroke-linecap: round; stroke-dasharray: 0.6 3.2; }
         .micro { fill: url(#dots-dim); stroke: #858585; stroke-width: 0.76; stroke-dasharray: 0.6 2.4; }
-        .country.visited, .micro.visited { fill: url(#dots-visited); stroke: #f2f2f2; filter: drop-shadow(0 0 8px rgba(255,255,255,0.28)); }
+        .country.visited, .micro.visited { fill: url(#dots-visited); stroke: #f2f2f2; }
       `;
       background.setAttribute("width", MAP_WIDTH);
       background.setAttribute("height", MAP_HEIGHT);
