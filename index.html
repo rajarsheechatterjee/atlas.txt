@@ -11,6 +11,7 @@
       --land-alt: #1a1a1a;
       --border: #555;
       --hover: #d8d8d8;
+      --wishlist: #c9963a;
       --visited: #f2f2f2;
       --text: #8f8f8f;
       --muted: #5f5f5f;
@@ -125,13 +126,50 @@
 
     .country.visited,
     .micro.visited {
-      fill: url(#dots-visited);
       stroke: var(--visited);
+    }
+
+    .country.wishlist,
+    .micro.wishlist {
+      stroke: var(--wishlist);
     }
 
     .country.visited:hover,
     .micro.visited:hover {
       stroke: #fff;
+    }
+
+    .state-fill {
+      stroke-width: 0.62;
+      stroke-linejoin: round;
+      stroke-linecap: round;
+      stroke-dasharray: 0.6 3.2;
+      vector-effect: non-scaling-stroke;
+      pointer-events: none;
+      opacity: 0;
+    }
+
+    .state-fill.visible {
+      opacity: 1;
+    }
+
+    .state-fill.hovered {
+      stroke: #fff;
+    }
+
+    .state-fill.micro-fill {
+      stroke-width: 0.76;
+      stroke-dasharray: 0.6 2.4;
+    }
+
+    .wishlist-fill {
+      fill: url(#dots-wishlist);
+      stroke: var(--wishlist);
+    }
+
+    .visited-fill {
+      fill: url(#dots-visited);
+      stroke: var(--visited);
     }
 
     .micro {
@@ -197,6 +235,11 @@
       font-weight: 700;
     }
 
+    .wishlist-mark {
+      color: var(--wishlist);
+      margin-left: 8px;
+    }
+
     .meter {
       height: 3px;
       background: #151515;
@@ -227,6 +270,16 @@
     .swatch {
       color: var(--visited);
       text-shadow: 0 0 10px rgba(255, 255, 255, 0.34);
+    }
+
+    .swatch.wishlist {
+      color: var(--wishlist);
+      text-shadow: 0 0 10px rgba(201, 150, 58, 0.34);
+    }
+
+    .swatch.unvisited {
+      color: #5a5a5a;
+      text-shadow: none;
     }
 
     button,
@@ -339,8 +392,9 @@
   <div class="continent-stats" id="continent-stats" aria-label="Continent progress"></div>
   <div class="stats">
     <span>[ visited: <strong id="visited-count">0</strong> / <strong id="total-count">195</strong> countries ]</span>
+    <span>[ wishlist: <strong id="wishlist-count">0</strong> ]</span>
     <span>[ world: <strong id="world-percent">0.0%</strong> ]</span>
-    <span class="legend">[ <span class="swatch">●</span> visited <span>•</span> unvisited ]</span>
+    <span class="legend">[ <span class="swatch">●</span> visited <span class="swatch wishlist">●</span> wishlist <span class="swatch unvisited">●</span> unvisited ]</span>
     <input id="country-search" type="search" placeholder="find country or ISO" list="country-list" autocomplete="off">
     <datalist id="country-list"></datalist>
     <div class="actions">
@@ -355,11 +409,13 @@
 
   <script>
     const STORAGE_KEY = "atlas_visited";
+    const WISHLIST_KEY = "atlas_wishlist";
     const MAP_WIDTH = 2000;
     const MAP_HEIGHT = 857;
     const SVG_NS = "http://www.w3.org/2000/svg";
     const MAP = document.getElementById("map");
     const visitedCount = document.getElementById("visited-count");
+    const wishlistCount = document.getElementById("wishlist-count");
     const totalCount = document.getElementById("total-count");
     const worldPercent = document.getElementById("world-percent");
     const continentStats = document.getElementById("continent-stats");
@@ -431,12 +487,18 @@ AF,67,34|AL,20,41|DZ,2,28|AD,1.6,42.5|AO,18,-12|AG,-61,17|AR,-64,-34|AM,45,40|AU
 
     const countryByIso = new Map(countries.map((country) => [country.iso, country]));
     const cellsByIso = new Map();
+    const wishlistCellsByIso = new Map();
+    const visitedCellsByIso = new Map();
     const occupied = new Map();
-    let visited = new Set(readVisited());
-    const sharedVisited = readSharedVisited();
-    if (sharedVisited.length) {
-      visited = new Set(sharedVisited);
-      saveVisited();
+    let visited = new Set(readStoredList(STORAGE_KEY));
+    let wishlist = new Set(readStoredList(WISHLIST_KEY));
+    const sharedState = readSharedState();
+    if (sharedState.hasShare) {
+      visited = new Set(sharedState.visited);
+      wishlist = new Set(sharedState.wishlist);
+      saveState();
+    } else {
+      removeVisitedFromWishlist();
     }
     totalCount.textContent = countries.length;
 
@@ -447,7 +509,7 @@ AF,67,34|AL,20,41|DZ,2,28|AD,1.6,42.5|AO,18,-12|AG,-61,17|AR,-64,-34|AM,45,40|AU
       item.innerHTML = `
         <div class="continent-line">
           <span>${name}</span>
-          <strong><span data-count>0</span> / ${isos.length}</strong>
+          <strong><span data-count>0</span> / ${isos.length} <span class="wishlist-mark">★ <span data-wishlist-count>0</span></span></strong>
         </div>
         <div class="meter" aria-hidden="true"><span data-meter></span></div>
       `;
@@ -460,32 +522,54 @@ AF,67,34|AL,20,41|DZ,2,28|AD,1.6,42.5|AO,18,-12|AG,-61,17|AR,-64,-34|AM,45,40|AU
       datalist.append(option);
     }
 
-    function readVisited() {
+    function sanitizeIsoList(list) {
+      return Array.isArray(list)
+        ? list.map((iso) => String(iso).trim().toUpperCase()).filter((iso) => countryByIso.has(iso))
+        : [];
+    }
+
+    function readStoredList(key) {
       try {
-        const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
-        return Array.isArray(saved) ? saved.filter((iso) => /^[A-Z]{2}$/.test(iso)) : [];
+        return sanitizeIsoList(JSON.parse(localStorage.getItem(key) || "[]"));
       } catch {
         return [];
       }
     }
 
-    function saveVisited() {
+    function saveState() {
+      removeVisitedFromWishlist();
       localStorage.setItem(STORAGE_KEY, JSON.stringify([...visited].sort()));
+      localStorage.setItem(WISHLIST_KEY, JSON.stringify([...wishlist].sort()));
     }
 
-    function readSharedVisited() {
+    function removeVisitedFromWishlist() {
+      for (const iso of visited) wishlist.delete(iso);
+    }
+
+    function parseIsoParam(value) {
+      if (!value) return [];
+      return sanitizeIsoList(value.split(","));
+    }
+
+    function readSharedState() {
       const hash = decodeURIComponent(location.hash.replace(/^#/, "").trim());
-      if (!hash) return [];
-      return hash
-        .split(",")
-        .map((iso) => iso.trim().toUpperCase())
-        .filter((iso) => countryByIso.has(iso));
+      if (!hash) return { hasShare: false, visited: [], wishlist: [] };
+      if (hash.includes("=")) {
+        const params = new URLSearchParams(hash);
+        const nextVisited = parseIsoParam(params.get("visited"));
+        const nextWishlist = parseIsoParam(params.get("wish")).filter((iso) => !nextVisited.includes(iso));
+        return { hasShare: true, visited: nextVisited, wishlist: nextWishlist };
+      }
+      return { hasShare: true, visited: parseIsoParam(hash), wishlist: [] };
     }
 
     function getShareUrl() {
-      const isos = [...visited].sort();
       const base = location.origin + location.pathname;
-      return isos.length ? `${base}#${isos.join(",")}` : base;
+      const params = new URLSearchParams();
+      if (visited.size) params.set("visited", [...visited].sort().join(","));
+      if (wishlist.size) params.set("wish", [...wishlist].sort().join(","));
+      const hash = params.toString().replace(/%2C/g, ",");
+      return hash ? `${base}#${hash}` : base;
     }
 
     function setStatus(message) {
@@ -527,6 +611,28 @@ AF,67,34|AL,20,41|DZ,2,28|AD,1.6,42.5|AO,18,-12|AG,-61,17|AR,-64,-34|AM,45,40|AU
       return path;
     }
 
+    function makeVisitedCountryPath(countryPath) {
+      const country = countryByIso.get(countryPath.iso);
+      if (!country) return null;
+      const path = document.createElementNS(SVG_NS, "path");
+      path.setAttribute("d", countryPath.d);
+      path.classList.add("state-fill", "visited-fill");
+      if (!visitedCellsByIso.has(country.iso)) visitedCellsByIso.set(country.iso, []);
+      visitedCellsByIso.get(country.iso).push(path);
+      return path;
+    }
+
+    function makeWishlistCountryPath(countryPath) {
+      const country = countryByIso.get(countryPath.iso);
+      if (!country) return null;
+      const path = document.createElementNS(SVG_NS, "path");
+      path.setAttribute("d", countryPath.d);
+      path.classList.add("state-fill", "wishlist-fill");
+      if (!wishlistCellsByIso.has(country.iso)) wishlistCellsByIso.set(country.iso, []);
+      wishlistCellsByIso.get(country.iso).push(path);
+      return path;
+    }
+
     function makeMicroMarker(markerData) {
       const country = countryByIso.get(markerData.iso);
       if (!country) return null;
@@ -544,11 +650,41 @@ AF,67,34|AL,20,41|DZ,2,28|AD,1.6,42.5|AO,18,-12|AG,-61,17|AR,-64,-34|AM,45,40|AU
       return marker;
     }
 
+    function makeVisitedMicroMarker(markerData) {
+      const country = countryByIso.get(markerData.iso);
+      if (!country) return null;
+      const marker = document.createElementNS(SVG_NS, "circle");
+      marker.setAttribute("cx", markerData.x);
+      marker.setAttribute("cy", markerData.y);
+      marker.setAttribute("r", "4.4");
+      marker.classList.add("state-fill", "visited-fill", "micro-fill");
+      if (!visitedCellsByIso.has(country.iso)) visitedCellsByIso.set(country.iso, []);
+      visitedCellsByIso.get(country.iso).push(marker);
+      return marker;
+    }
+
+    function makeWishlistMicroMarker(markerData) {
+      const country = countryByIso.get(markerData.iso);
+      if (!country) return null;
+      const marker = document.createElementNS(SVG_NS, "circle");
+      marker.setAttribute("cx", markerData.x);
+      marker.setAttribute("cy", markerData.y);
+      marker.setAttribute("r", "4.4");
+      marker.classList.add("state-fill", "wishlist-fill", "micro-fill");
+      if (!wishlistCellsByIso.has(country.iso)) wishlistCellsByIso.set(country.iso, []);
+      wishlistCellsByIso.get(country.iso).push(marker);
+      return marker;
+    }
+
     function renderMap() {
       const svg = document.createElementNS(SVG_NS, "svg");
       const defs = document.createElementNS(SVG_NS, "defs");
       const countriesLayer = document.createElementNS(SVG_NS, "g");
       const microLayer = document.createElementNS(SVG_NS, "g");
+      const wishlistLayer = document.createElementNS(SVG_NS, "g");
+      const wishlistMicroLayer = document.createElementNS(SVG_NS, "g");
+      const visitedLayer = document.createElementNS(SVG_NS, "g");
+      const visitedMicroLayer = document.createElementNS(SVG_NS, "g");
 
       svg.classList.add("map-svg");
       svg.setAttribute("width", MAP_WIDTH);
@@ -560,20 +696,29 @@ AF,67,34|AL,20,41|DZ,2,28|AD,1.6,42.5|AO,18,-12|AG,-61,17|AR,-64,-34|AM,45,40|AU
       defs.append(
         makePattern("dots-dim", "#5a5a5a", "0.42", "0.85"),
         makePattern("dots-hover", "#e2e2e2", "0.9", "1.05"),
+        makePattern("dots-wishlist", "#c9963a", "1", "1.05"),
         makePattern("dots-visited", "#ffffff", "1", "1.05")
       );
 
       for (const countryPath of COUNTRY_PATHS) {
         const path = makeCountryPath(countryPath);
         if (path) countriesLayer.append(path);
+        const wishlistPath = makeWishlistCountryPath(countryPath);
+        if (wishlistPath) wishlistLayer.append(wishlistPath);
+        const visitedPath = makeVisitedCountryPath(countryPath);
+        if (visitedPath) visitedLayer.append(visitedPath);
       }
 
       for (const markerData of MICRO_MARKERS) {
         const marker = makeMicroMarker(markerData);
         if (marker) microLayer.append(marker);
+        const wishlistMarker = makeWishlistMicroMarker(markerData);
+        if (wishlistMarker) wishlistMicroLayer.append(wishlistMarker);
+        const visitedMarker = makeVisitedMicroMarker(markerData);
+        if (visitedMarker) visitedMicroLayer.append(visitedMarker);
       }
 
-      svg.append(defs, countriesLayer, microLayer);
+      svg.append(defs, countriesLayer, microLayer, wishlistLayer, wishlistMicroLayer, visitedLayer, visitedMicroLayer);
       MAP.replaceChildren(svg);
       syncAllCells();
       updateStats();
@@ -581,9 +726,19 @@ AF,67,34|AL,20,41|DZ,2,28|AD,1.6,42.5|AO,18,-12|AG,-61,17|AR,-64,-34|AM,45,40|AU
 
     function syncCountry(iso) {
       const countryCells = cellsByIso.get(iso) || [];
+      const wishlistCells = wishlistCellsByIso.get(iso) || [];
+      const visitedCells = visitedCellsByIso.get(iso) || [];
       const isVisited = visited.has(iso);
+      const isWishlisted = wishlist.has(iso);
       for (const el of countryCells) {
         el.classList.toggle("visited", isVisited);
+        el.classList.toggle("wishlist", isWishlisted);
+      }
+      for (const el of wishlistCells) {
+        el.classList.toggle("visible", isWishlisted);
+      }
+      for (const el of visitedCells) {
+        el.classList.toggle("visible", isVisited);
       }
     }
 
@@ -593,27 +748,40 @@ AF,67,34|AL,20,41|DZ,2,28|AD,1.6,42.5|AO,18,-12|AG,-61,17|AR,-64,-34|AM,45,40|AU
 
     function updateStats() {
       visitedCount.textContent = visited.size;
+      wishlistCount.textContent = wishlist.size;
       worldPercent.textContent = `${((visited.size / countries.length) * 100).toFixed(1)}%`;
       for (const [name, isos] of Object.entries(CONTINENTS)) {
         const item = continentStats.querySelector(`[data-continent="${name}"]`);
         const count = isos.filter((iso) => visited.has(iso)).length;
+        const wishCount = isos.filter((iso) => wishlist.has(iso)).length;
         item.querySelector("[data-count]").textContent = count;
+        item.querySelector("[data-wishlist-count]").textContent = wishCount;
         item.querySelector("[data-meter]").style.width = `${(count / isos.length) * 100}%`;
       }
     }
 
     function toggleCountry(iso) {
       if (!countryByIso.has(iso)) return;
-      if (visited.has(iso)) visited.delete(iso);
-      else visited.add(iso);
-      saveVisited();
+      if (visited.has(iso)) {
+        visited.delete(iso);
+      } else if (wishlist.has(iso)) {
+        wishlist.delete(iso);
+        visited.add(iso);
+      } else {
+        wishlist.add(iso);
+      }
+      saveState();
       syncCountry(iso);
       updateStats();
     }
 
     function setHover(iso, active) {
       const countryCells = cellsByIso.get(iso) || [];
+      const wishlistCells = wishlistCellsByIso.get(iso) || [];
+      const visitedCells = visitedCellsByIso.get(iso) || [];
       for (const el of countryCells) el.classList.toggle("hovered", active);
+      for (const el of wishlistCells) el.classList.toggle("hovered", active);
+      for (const el of visitedCells) el.classList.toggle("hovered", active);
     }
 
     function getIsoTarget(eventTarget) {
@@ -685,10 +853,8 @@ AF,67,34|AL,20,41|DZ,2,28|AD,1.6,42.5|AO,18,-12|AG,-61,17|AR,-64,-34|AM,45,40|AU
         app: "atlas.txt",
         exportedAt: new Date().toISOString(),
         totalCountries: countries.length,
-        visited: [...visited].sort().map((iso) => ({
-          iso,
-          name: countryByIso.get(iso).name
-        }))
+        visited: [...visited].sort(),
+        wishlist: [...wishlist].sort()
       };
       downloadBlob(
         new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" }),
@@ -706,7 +872,13 @@ AF,67,34|AL,20,41|DZ,2,28|AD,1.6,42.5|AO,18,-12|AG,-61,17|AR,-64,-34|AM,45,40|AU
       style.textContent = `
         .country { fill: url(#dots-dim); stroke: #747474; stroke-width: 0.62; stroke-linejoin: round; stroke-linecap: round; stroke-dasharray: 0.6 3.2; }
         .micro { fill: url(#dots-dim); stroke: #858585; stroke-width: 0.76; stroke-dasharray: 0.6 2.4; }
-        .country.visited, .micro.visited { fill: url(#dots-visited); stroke: #f2f2f2; }
+        .country.wishlist, .micro.wishlist { stroke: #c9963a; }
+        .country.visited, .micro.visited { stroke: #f2f2f2; }
+        .state-fill { stroke-width: 0.62; stroke-linejoin: round; stroke-linecap: round; stroke-dasharray: 0.6 3.2; opacity: 0; }
+        .state-fill.micro-fill { stroke-width: 0.76; stroke-dasharray: 0.6 2.4; }
+        .wishlist-fill { fill: url(#dots-wishlist); stroke: #c9963a; }
+        .visited-fill { fill: url(#dots-visited); stroke: #f2f2f2; }
+        .state-fill.visible { opacity: 1; }
       `;
       background.setAttribute("width", MAP_WIDTH);
       background.setAttribute("height", MAP_HEIGHT);
@@ -748,17 +920,19 @@ AF,67,34|AL,20,41|DZ,2,28|AD,1.6,42.5|AO,18,-12|AG,-61,17|AR,-64,-34|AM,45,40|AU
 
     clearAll.addEventListener("click", () => {
       visited = new Set();
-      saveVisited();
+      wishlist = new Set();
+      saveState();
       history.replaceState(null, "", location.pathname);
       syncAllCells();
       updateStats();
     });
 
     window.addEventListener("hashchange", () => {
-      const nextVisited = readSharedVisited();
-      if (!nextVisited.length) return;
-      visited = new Set(nextVisited);
-      saveVisited();
+      const nextState = readSharedState();
+      if (!nextState.hasShare) return;
+      visited = new Set(nextState.visited);
+      wishlist = new Set(nextState.wishlist);
+      saveState();
       syncAllCells();
       updateStats();
     });
